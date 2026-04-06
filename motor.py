@@ -64,6 +64,7 @@ class Fuel_LUT(Fuel):
         for i in range(1, self._n):
             self.dbdp[i-1] = (self.burn_rates[i] - self.burn_rates[i-1]) / (self.pressures[i] - self.pressures[i-1])
         self.dbdp[-1] = 0 # explicitly setting this for clarity
+        self._r = range(self._n-2,0,-1)
 
     def get_burn_rate(self, pressure:float, temperature:float) -> float:
         if pressure <= self.pressures[0]:
@@ -71,10 +72,10 @@ class Fuel_LUT(Fuel):
         elif pressure >= self.pressures[-1]:
             return self.burn_rates[-1]
 
-        idx = self._n - 1
-        for i in range(1, self._n):
-            if pressure < self.pressures[i]:
-                idx = i - 1
+        idx = 0
+        for i in self._r:
+            if pressure > self.pressures[i]:
+                idx = i
                 break
 
         return self.burn_rates[idx] + (pressure - self.pressures[idx]) * self.dbdp[idx]
@@ -601,6 +602,8 @@ class Motor:
         self._mass = []
         self._times = []
         self._inertia = []
+        self._chamber_pressure = []
+        self._chamber_temperature = []
         self._ndata = 0
 
     def compute_constant_gamma_ideal_gas(self, pressure_ambient: float, temperature_ambient: float, 
@@ -682,12 +685,13 @@ class Motor:
         const_a = gamma*const_p
         min_energy = np.ones(nc)*1e-6
         chamber_net_A = np.pi*self.nozzle.chamber_radius**2
-        net_gauge_pressure_term = pressure_ambient*self.nozzle.exit_area()
 
         self._times = [0.0]
         self._mass = [mass_fuel]
         self._inertia = [inertia]
         self._thrust = [0.0]
+        self._chamber_pressure = [pressure_chamber]
+        self._chamber_temperature = [temperature_chamber]
         self._cells = []
         
         burnout = False
@@ -749,12 +753,9 @@ class Motor:
             s = np.maximum(lax[left_idx], lax[right_idx])
             face_flux = half_A*((F[:,left_idx] + F[:,right_idx]) - s*(Q[:,right_idx] - Q[:,left_idx]))
 
-            # Momentum Source term:
-            S = pressure*mesh.dA # note dA is A_{i+1/2} - A_{i-1/2}
-
             # Cell Step Residual
             R = face_flux[:,left_face_idx] - face_flux[:,right_face_idx]
-            R[1,:] = R[1,:] + S
+            R[1,:] = R[1,:] + pressure*mesh.dA # Momentum Source term. Note dA is A_{i+1/2} - A_{i-1/2}
             R = R/mesh.V
 
             # Euler Step, note we're ignoring chamber and exit conditions 
@@ -814,8 +815,11 @@ class Motor:
                 self._times.append(time)
                 self._mass.append(mass_fuel)
                 self._inertia.append(inertia)
+                self._chamber_pressure.append(pressure_chamber)
+                self._chamber_temperature.append(temperature_chamber)
 
-                thrust = np.sum(S) + pressure_chamber*chamber_net_A - net_gauge_pressure_term
+                guage_pressure = pressure - pressure_ambient
+                thrust = np.sum(guage_pressure*mesh.dA) + (pressure_chamber - pressure_ambient)*chamber_net_A
                 # thrust is entirely driven by pressure on body, ie, no viscous forces
                 self._thrust.append(thrust)
                 print("Thrust: ", thrust)
@@ -831,17 +835,23 @@ class Motor:
         print("Time Burnout")
         print(time_burnout)
                 
-    def thrusts(self) -> np.ndarray:
+    def thrusts(self) -> list:
         return self._thrust
     
-    def masses(self) -> np.ndarray:
+    def masses(self) -> list:
         return self._mass
     
-    def times(self) -> np.ndarray:
+    def times(self) -> list:
         return self._times
     
-    def inertias(self) -> np.ndarray:
+    def inertias(self) -> list:
         return self._inertia
+    
+    def chamber_pressures(self) -> list:
+        return self._chamber_pressure
+    
+    def chamber_temperatures(self) -> list:
+        return self._chamber_temperature
     
     def cells(self) -> list[np.ndarray]:
         return self._cells
