@@ -199,12 +199,27 @@ class MotorGUI:
             row=3, column=0, sticky="ew"
         )
 
-        self.figure = Figure(figsize=(9, 7), dpi=100)
-        self.ax_geometry = self.figure.add_subplot(311)
-        self.ax_thrust = self.figure.add_subplot(312)
-        self.ax_mass = self.figure.add_subplot(313)
+        self.plot_canvas = tk.Canvas(plot_frame, highlightthickness=0)
+        self.plot_canvas.grid(row=0, column=0, sticky="nsew")
+        plot_scrollbar = ttk.Scrollbar(plot_frame, orient="vertical", command=self.plot_canvas.yview)
+        plot_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.plot_canvas.configure(yscrollcommand=plot_scrollbar.set)
+
+        self.plot_inner_frame = ttk.Frame(self.plot_canvas)
+        self.plot_window = self.plot_canvas.create_window((0, 0), window=self.plot_inner_frame, anchor="nw")
+        self.plot_inner_frame.bind("<Configure>", self._sync_plot_scroll_region)
+        self.plot_canvas.bind("<Configure>", self._resize_plot_window)
+        self.plot_canvas.bind("<Enter>", self._bind_plot_mousewheel)
+        self.plot_canvas.bind("<Leave>", self._unbind_plot_mousewheel)
+
+        self.figure = Figure(figsize=(9, 12), dpi=100)
+        self.ax_geometry = self.figure.add_subplot(511)
+        self.ax_thrust = self.figure.add_subplot(512)
+        self.ax_mass = self.figure.add_subplot(513)
+        self.ax_pressure = self.figure.add_subplot(514)
+        self.ax_temperature = self.figure.add_subplot(515)
         self.figure.tight_layout(pad=2.0)
-        self.canvas = FigureCanvasTkAgg(self.figure, master=plot_frame)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=self.plot_inner_frame)
         self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
         self._reset_plots()
         self._update_burn_rate_mode()
@@ -262,6 +277,21 @@ class MotorGUI:
 
     def _on_mousewheel(self, event: tk.Event) -> None:
         self.controls_canvas.yview_scroll(int(-event.delta / 120), "units")
+
+    def _sync_plot_scroll_region(self, event: tk.Event | None = None) -> None:
+        self.plot_canvas.configure(scrollregion=self.plot_canvas.bbox("all"))
+
+    def _resize_plot_window(self, event: tk.Event) -> None:
+        self.plot_canvas.itemconfigure(self.plot_window, width=event.width)
+
+    def _bind_plot_mousewheel(self, event: tk.Event | None = None) -> None:
+        self.plot_canvas.bind_all("<MouseWheel>", self._on_plot_mousewheel)
+
+    def _unbind_plot_mousewheel(self, event: tk.Event | None = None) -> None:
+        self.plot_canvas.unbind_all("<MouseWheel>")
+
+    def _on_plot_mousewheel(self, event: tk.Event) -> None:
+        self.plot_canvas.yview_scroll(int(-event.delta / 120), "units")
 
     def _on_table_text_modified(self, event: tk.Event) -> None:
         widget = event.widget
@@ -342,14 +372,27 @@ class MotorGUI:
         self.ax_geometry.clear()
         self.ax_thrust.clear()
         self.ax_mass.clear()
+        self.ax_pressure.clear()
+        self.ax_temperature.clear()
         self.ax_geometry.set_title("Motor Geometry")
         self.ax_geometry.set_xlabel("Axial Position (m)")
         self.ax_geometry.set_ylabel("Radius (m)")
         self.ax_thrust.set_title("Thrust vs Time")
         self.ax_thrust.set_ylabel("Thrust (N)")
         self.ax_mass.set_title("Fuel Mass vs Time")
-        self.ax_mass.set_xlabel("Time (s)")
         self.ax_mass.set_ylabel("Mass (kg)")
+        self.ax_pressure.set_title("Chamber Pressure vs Time")
+        self.ax_pressure.set_ylabel("Pressure (Pa)")
+        self.ax_temperature.set_title("Chamber Temperature vs Time")
+        self.ax_temperature.set_xlabel("Time (s)")
+        self.ax_temperature.set_ylabel("Temperature (K)")
+        self.ax_thrust.set_xlabel("Time (s)")
+        self.ax_mass.set_xlabel("Time (s)")
+        self.ax_pressure.set_xlabel("Time (s)")
+        self.ax_thrust.grid(True, alpha=0.3)
+        self.ax_mass.grid(True, alpha=0.3)
+        self.ax_pressure.grid(True, alpha=0.3)
+        self.ax_temperature.grid(True, alpha=0.3)
         self.canvas.draw_idle()
 
     def _schedule_geometry_preview(self, *args) -> None:
@@ -470,6 +513,8 @@ class MotorGUI:
             times = np.asarray(motor.times(), dtype=float)
             thrust = np.asarray(motor.thrusts(), dtype=float)
             masses = np.asarray(motor.masses(), dtype=float)
+            pressures = np.asarray(motor.chamber_pressures(), dtype=float)
+            temperatures = np.asarray(motor.chamber_temperatures(), dtype=float)
 
             if times.size == 0:
                 raise ValueError("Simulation produced no samples.")
@@ -483,15 +528,28 @@ class MotorGUI:
             self._plot_geometry(motor, params)
             self.ax_thrust.clear()
             self.ax_mass.clear()
+            self.ax_pressure.clear()
+            self.ax_temperature.clear()
             self.ax_thrust.plot(times, thrust, color="tab:red", linewidth=2)
             self.ax_mass.plot(times, masses, color="tab:blue", linewidth=2)
+            self.ax_pressure.plot(times, pressures, color="tab:green", linewidth=2)
+            self.ax_temperature.plot(times, temperatures, color="tab:orange", linewidth=2)
             self.ax_thrust.set_title("Thrust vs Time")
+            self.ax_thrust.set_xlabel("Time (s)")
             self.ax_thrust.set_ylabel("Thrust (N)")
             self.ax_mass.set_title("Fuel Mass vs Time")
             self.ax_mass.set_xlabel("Time (s)")
             self.ax_mass.set_ylabel("Mass (kg)")
+            self.ax_pressure.set_title("Chamber Pressure vs Time")
+            self.ax_pressure.set_xlabel("Time (s)")
+            self.ax_pressure.set_ylabel("Pressure (Pa)")
+            self.ax_temperature.set_title("Chamber Temperature vs Time")
+            self.ax_temperature.set_xlabel("Time (s)")
+            self.ax_temperature.set_ylabel("Temperature (K)")
             self.ax_thrust.grid(True, alpha=0.3)
             self.ax_mass.grid(True, alpha=0.3)
+            self.ax_pressure.grid(True, alpha=0.3)
+            self.ax_temperature.grid(True, alpha=0.3)
             self.figure.tight_layout(pad=2.0)
             self.canvas.draw_idle()
 
